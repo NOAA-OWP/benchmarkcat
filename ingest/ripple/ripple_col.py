@@ -39,25 +39,25 @@ def parse_arguments():
     parser.add_argument(
         "--asset_object_key",
         type=str,
-        default="benchmark/ripple_fim_100/",
+        default="benchmark/ripple_v0.11.x/",
         help="Key for asset object",
     )
     parser.add_argument("--reprocess_assets", action="store_true", help="Reprocess assets")
     parser.add_argument(
         "--derived_metadata_path",
         type=str,
-        default="benchmark/stac-bench-cat/assets/derived-asset-data/ripple_fim_collection.parquet",
+        default="benchmark/stac-bench-cat/assets/derived-asset-data/ripple_v0.11.x_collection.parquet",
     )
     parser.add_argument(
         "--f2fim_ver",
         type=str,
-        default="0_3_0",
+        default="0_5_0",
         help="flows2fim version",
     )
     parser.add_argument(
         "--ripple_ver",
         type=str,
-        default="0_10_3",
+        default="0_11_0",
         help="ripple version",
     )
     parser.add_argument(
@@ -65,6 +65,12 @@ def parse_arguments():
         type=str,
         default="benchmark/stac-bench-cat/assets/WBDHU8_webproj.gpkg",
         help="S3 key for the HUC8 boundaries GeoPackage",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N subdirectories per source — for testing. Omit for a real run.",
     )
     return parser.parse_args()
 
@@ -120,8 +126,17 @@ def process_ohio_rfc(
     ripple_ver,
     huc_gdf,
 ):
-    """Process Ohio RFC data which has a flat directory structure"""
+    """Process Ohio RFC data which has a flat directory structure.
+
+    Returns the skipped (source, identifier, reason) tuple if no raster
+    output was found yet, else None.
+    """
     logging.info(f"Processing ohio_rfc")
+
+    if not s3_utils.list_files_with_extensions(bucket_name, source_path, [".tif"]):
+        reason = "no raster output found"
+        logging.warning(f"No raster output found under {source_path} yet — skipping ohio_rfc")
+        return ("ohio", "rfc", reason)
 
     if asset_handler.assets_processed(source_path) and not reprocess_assets:
         asset_results = asset_handler.read_data_parquet(source_path)
@@ -210,10 +225,9 @@ def process_ohio_rfc(
 
     # Add assets for each magnitude
     for magnitude in asset_results["magnitudes"]:
-        # Add extent raster
         extent_href, is_valid = s3_utils.generate_href(
             bucket_name,
-            f"{source_path}{magnitude}_OhioRFC_extent_f2f_ver_{f2fim_ver}.tif",
+            f"{source_path}{magnitude}_extent_f2f_ver_{f2fim_ver}.tif",
             link_type,
         )
         if is_valid:
@@ -234,6 +248,8 @@ def process_ohio_rfc(
 
     collection.add_item(item)
 
+    return None
+
 
 def process_source_directory(
     source_path,
@@ -248,12 +264,28 @@ def process_source_directory(
     ripple_ver,
     huc_gdf,
     resolution,
+    limit=None,
 ):
+    """Catalog every subdirectory under source_path that has raster output.
+
+    Returns a list of (source, identifier, reason) tuples for subdirectories
+    skipped because no raster output was found yet.
+    """
     subdirs = s3_utils.list_subdirectories(bucket_name, source_path)
+    if limit is not None:
+        subdirs = subdirs[:limit]
+
+    skipped = []
 
     for subdir in subdirs:
         identifier = subdir.strip("/").split("/")[-1]
         logging.info(f"Processing {source} {identifier}")
+
+        if not s3_utils.list_files_with_extensions(bucket_name, subdir, [".tif"]):
+            reason = "no raster output found"
+            logging.warning(f"No raster output found under {subdir} yet — skipping {source} {identifier}")
+            skipped.append((source, identifier, reason))
+            continue
 
         hucs_list = []
 
@@ -282,8 +314,7 @@ def process_source_directory(
         # Compute fractional overlap of each HUC8 polygon
         sel["overlap"] = sel.geometry.apply(lambda h: h.intersection(ripple_geom).area / h.area)
 
-        # Pick only those that truly contain, are contained by,
-        #    or overlap more than 10% of their own area
+        # Pick only those that truly contain, are contained by, or overlap more than 10% of their own area
         final = sel[sel.geometry.contains(ripple_geom) | sel.geometry.within(ripple_geom) | (sel["overlap"] > 0.10)]
 
         # Extract unique HUC8 codes
@@ -343,52 +374,37 @@ def process_source_directory(
         else:
             print(f"Skipping model domain asset for {identifier} - invalid or inaccessible")
 
-        # Add assets for each magnitude
-        for magnitude in asset_results["magnitudes"]:
-            # Add extent raster
-            if "mip" in source:
-                extent_href, is_valid = s3_utils.generate_href(
-                    bucket_name,
-                    f"{subdir}{magnitude}_extent_f2f_ver_{f2fim_ver}.tif",
-                    link_type,
-                )
-                if is_valid:
-                    item.add_asset(
-                        f"{magnitude}_extent",
-                        pystac.Asset(
-                            href=extent_href,
-                            media_type="image/tiff; application=geotiff",
-                            roles=["data"],
-                            title=f"{magnitude} Flood Extent",
-                        ),
-                    )
-                else:
-                    print(f"Skipping extent asset for magnitude {magnitude} for {identifier} - invalid or inaccessible")
+        # Add assets for each magnitude. Identifiers are either bare ids (mip,
+        # mn, nc — e.g. "27141") or id_CommonName (ble — e.g. "12020006_Village").
+        id_parts = identifier.split("_", 1)
+        common_name = id_parts[1] if len(id_parts) > 1 else None
 
+        for magnitude in asset_results["magnitudes"]:
+            if common_name:
+                extent_key = f"{subdir}{magnitude}_{common_name}_extent_f2f_ver_{f2fim_ver}.tif"
             else:
-                common_name = identifier.split("_")[1]
-                extent_href, is_valid = s3_utils.generate_href(
-                    bucket_name,
-                    f"{subdir}{magnitude}_{common_name}_extent_f2f_ver_{f2fim_ver}.tif",
-                    link_type,
+                extent_key = f"{subdir}{magnitude}_extent_f2f_ver_{f2fim_ver}.tif"
+
+            extent_href, is_valid = s3_utils.generate_href(bucket_name, extent_key, link_type)
+            if is_valid:
+                item.add_asset(
+                    f"{magnitude}_extent",
+                    pystac.Asset(
+                        href=extent_href,
+                        media_type="image/tiff; application=geotiff",
+                        roles=["data"],
+                        title=f"{magnitude} Flood Extent",
+                    ),
                 )
-                if is_valid:
-                    item.add_asset(
-                        f"{magnitude}_extent",
-                        pystac.Asset(
-                            href=extent_href,
-                            media_type="image/tiff; application=geotiff",
-                            roles=["data"],
-                            title=f"{magnitude} Flood Extent",
-                        ),
-                    )
-                else:
-                    print(f"Skipping extent asset for magnitude {magnitude} for {identifier} - invalid or inaccessible")
+            else:
+                print(f"Skipping extent asset for magnitude {magnitude} for {identifier} - invalid or inaccessible")
 
         # validate item
         item.validate()
 
         collection.add_item(item)
+
+    return skipped
 
 
 def main():
@@ -412,44 +428,28 @@ def main():
         s3_utils, args.bucket_name, args.asset_object_key, args.link_type, flowfile_info
     )
 
-    # # Process BLE data
-    # ble_path = f"{args.asset_object_key}ble/"
-    # process_source_directory(
-    #     ble_path,
-    #     "ble",
-    #     s3_utils,
-    #     args.bucket_name,
-    #     args.link_type,
-    #     collection,
-    #     args.reprocess_assets,
-    #     asset_handler,
-    #     args.f2fim_ver,
-    #     args.ripple_ver,
-    #     huc_gdf,
-    #     resolution=3,
-    # )
+    skipped = []
 
-    # # Process MIP data
-    # mip_path = f"{args.asset_object_key}mip/"
-    # process_source_directory(
-    #     mip_path,
-    #     "mip",
-    #     s3_utils,
-    #     args.bucket_name,
-    #     args.link_type,
-    #     collection,
-    #     args.reprocess_assets,
-    #     asset_handler,
-    #     args.f2fim_ver,
-    #     args.ripple_ver,
-    #     huc_gdf,
-    #     resolution=3,
-    # )
+    for source in ("ble", "mip", "mn", "nc"):
+        skipped += process_source_directory(
+            f"{args.asset_object_key}{source}/",
+            source,
+            s3_utils,
+            args.bucket_name,
+            args.link_type,
+            collection,
+            args.reprocess_assets,
+            asset_handler,
+            args.f2fim_ver,
+            args.ripple_ver,
+            huc_gdf,
+            resolution=3,
+            limit=args.limit,
+        )
 
-    # Process Ohio RFC data (flat directory structure)
-    ohio_rfc_path = f"{args.asset_object_key}ohio_rfc/"
-    process_ohio_rfc(
-        ohio_rfc_path,
+    # Ohio RFC is a flat directory (source/id split as "ohio"/"rfc"), handled separately.
+    ohio_skip = process_ohio_rfc(
+        f"{args.asset_object_key}ohio/rfc/",
         s3_utils,
         args.bucket_name,
         args.link_type,
@@ -460,13 +460,31 @@ def main():
         args.ripple_ver,
         huc_gdf,
     )
+    if ohio_skip is not None:
+        skipped.append(ohio_skip)
 
     # Update and validate collection
-    s3_utils.update_collection(collection, "ripple-fim-collection", args.catalog_path, args.bucket_name)
+    s3_utils.update_collection_or_bootstrap(collection, "ripple-fim-collection", args.catalog_path, args.bucket_name)
     collection.validate()
 
     # Upload modified parquet file
     asset_handler.upload_modified_parquet()
+
+    # Write skipped-library reference file for anyone auditing what didn't make it into
+    # STAC, and upload it to S3 alongside the catalog (the container's local filesystem
+    # doesn't persist past the run).
+    skipped_filename = f"skipped_libraries_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.txt"
+    with tempfile.TemporaryDirectory() as td:
+        local_skipped_path = os.path.join(td, skipped_filename)
+        with open(local_skipped_path, "w") as f:
+            f.write(f"# Libraries skipped from STAC cataloging under {args.asset_object_key} — no raster output found.\n")
+            f.write(f"# {len(skipped)} skipped, generated {datetime.now(timezone.utc).isoformat()}\n")
+            for source, identifier, reason in skipped:
+                f.write(f"{source}_{identifier}\t{reason}\n")
+
+        skipped_s3_key = f"{args.catalog_path}{skipped_filename}"
+        s3_utils.s3_client.upload_file(local_skipped_path, args.bucket_name, skipped_s3_key)
+        logging.info(f"Wrote {len(skipped)} skipped libraries to s3://{args.bucket_name}/{skipped_s3_key}")
 
 
 if __name__ == "__main__":

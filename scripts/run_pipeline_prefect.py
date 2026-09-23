@@ -102,6 +102,20 @@ def build_config(args, tf_outputs: dict) -> dict:
     cfg["derived_metadata_path"] = tf_pipeline.get("derived_metadata_path")
     cfg["dfo_geopackage_object_key"] = tf_pipeline.get("dfo_geopackage_object_key")
 
+    if pipeline == "ripple":
+        ripple_job_def_names = tf_outputs.get("ripple_job_definition_names") or {}
+        cfg["split_job_def"] = ripple_job_def_names.get("ripple-split") or f"{project_name}-ripple-split"
+        cfg["worker_job_def"] = ripple_job_def_names.get("ripple-worker") or f"{project_name}-ripple-worker"
+        cfg["merge_job_def"] = ripple_job_def_names.get("ripple-merge") or f"{project_name}-ripple-merge"
+        cfg["cog_job_def"] = ripple_job_def_names.get("ripple-cog") or f"{project_name}-ripple-cog"
+        cfg["success_markers_prefix"] = tf_pipeline.get("success_markers_prefix")
+        cfg["error_retry_prefix"] = tf_pipeline.get("error_retry_prefix")
+        cfg["error_nonretry_prefix"] = tf_pipeline.get("error_nonretry_prefix")
+        cfg["items_per_job"] = (
+            args.items_per_job if getattr(args, "items_per_job", None) is not None
+            else tf_pipeline.get("items_per_job", 5)
+        )
+
     return cfg
 
 
@@ -164,6 +178,17 @@ REQUIRED_CFG_KEYS = [
     "derived_metadata_path",
     "hucs_object_key",
     "boundaries_object_key",
+]
+
+# Ripple has no STAC cataloging step, so its required keys are a smaller set.
+REQUIRED_CFG_KEYS_RIPPLE = [
+    "job_queue_name",
+    "s3_bucket",
+    "asset_object_key",
+    "manifest_s3_key",
+    "success_markers_prefix",
+    "error_retry_prefix",
+    "error_nonretry_prefix",
 ]
 
 
@@ -463,6 +488,263 @@ async def submit_and_poll_merge(
 
 
 # ---------------------------------------------------------------------------
+# Phase tasks — ripple (flows2fim extent generation only; no STAC cataloging)
+# ---------------------------------------------------------------------------
+
+@task(name="Ripple Phase 1 — Split")
+async def ripple_submit_and_poll_split(
+    cfg: dict,
+    timestamp: str,
+    poll_interval: int = 30,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict:
+    """Submit ripple Split job to Batch and poll until complete."""
+    logger = get_run_logger()
+    batch_client = get_aws_client(cfg["aws_profile"], cfg["aws_region"], "batch")
+
+    split_params = {
+        "bucket_name": cfg["s3_bucket"],
+        "ripple_asset_object_key": cfg["asset_object_key"],
+        "manifest_s3_key": cfg["manifest_s3_key"],
+        "ripple_success_markers_prefix": cfg["success_markers_prefix"],
+        "ripple_error_nonretry_prefix": cfg["error_nonretry_prefix"],
+    }
+    split_overrides = None
+    if limit is not None:
+        logger.warning("--limit %d set — this is a TEST BATCH, not a full run.", limit)
+        split_overrides = {"environment": [{"name": "LIMIT", "value": str(limit)}]}
+
+    split_job_name = f"ripple-split-{timestamp}"
+    split_job_id = submit_job(
+        batch_client,
+        job_name=split_job_name,
+        job_definition=cfg["split_job_def"],
+        job_queue=cfg["job_queue_name"],
+        parameters=split_params,
+        container_overrides=split_overrides,
+        dry_run=dry_run,
+    )
+
+    await create_markdown_artifact(
+        key="ripple-split-job-details",
+        markdown=(
+            "## Ripple Phase 1 — Split Job\n\n"
+            f"| Field | Value |\n|---|---|\n"
+            f"| Job Name | `{split_job_name}` |\n"
+            f"| Job ID | `{split_job_id or 'DRY RUN'}` |\n"
+            f"| Job Definition | `{cfg['split_job_def']}` |\n"
+            f"| Manifest Key | `{cfg['manifest_s3_key']}` |\n"
+            + (f"| **Limit** | **{limit} dir_names (TEST BATCH)** |\n" if limit is not None else "")
+        ),
+        description="Ripple split phase AWS Batch job details",
+    )
+
+    if not dry_run and split_job_id:
+        logger.info("Ripple split job submitted: %s", split_job_id)
+        await async_poll_until_complete(batch_client, split_job_id, split_job_name, poll_interval)
+
+    return {"phase": "split", "job_id": split_job_id, "job_name": split_job_name}
+
+
+@task(name="Ripple Phase 2 — Workers")
+async def ripple_submit_and_poll_workers(
+    cfg: dict,
+    timestamp: str,
+    poll_interval: int = 30,
+    dry_run: bool = False,
+) -> dict:
+    """Compute array size from manifest, submit ripple Workers job to Batch, poll until complete."""
+    logger = get_run_logger()
+    batch_client = get_aws_client(cfg["aws_profile"], cfg["aws_region"], "batch")
+    s3_client = get_aws_client(cfg["s3_profile"], cfg["aws_region"], "s3")
+
+    if dry_run:
+        total_items = 100
+        logger.info("[DRY RUN] Assuming %s libraries for array size calculation", total_items)
+    else:
+        total_items = read_manifest_total(s3_client, cfg["s3_bucket"], cfg["manifest_s3_key"])
+        logger.info("Total libraries (dir_names) in manifest: %s", total_items)
+        if total_items == 0:
+            logger.info("No outstanding dir_names — nothing to dispatch.")
+            return {"phase": "workers", "job_id": None, "job_name": "SKIPPED (nothing outstanding)"}
+
+    items_per_job = int(cfg["items_per_job"])
+    if total_items <= items_per_job:
+        array_size = None
+        array_desc = f"single job ({total_items} librar(y/ies) <= {items_per_job}/job)"
+    else:
+        array_size = math.ceil(total_items / items_per_job)
+        array_size = min(array_size, MAX_ARRAY_SIZE)
+        actual_chunk = math.ceil(total_items / array_size)
+        array_desc = f"array job — {array_size} children x ~{actual_chunk} librar(y/ies) each"
+        logger.info("Array size: %s children x ~%s librar(y/ies) each", array_size, actual_chunk)
+
+    worker_params = {
+        "bucket_name": cfg["s3_bucket"],
+        "manifest_s3_key": cfg["manifest_s3_key"],
+        "items_per_job": str(items_per_job),
+    }
+
+    worker_job_name = f"ripple-worker-{timestamp}"
+    worker_job_id = submit_job(
+        batch_client,
+        job_name=worker_job_name,
+        job_definition=cfg["worker_job_def"],
+        job_queue=cfg["job_queue_name"],
+        parameters=worker_params,
+        array_size=array_size,
+        dry_run=dry_run,
+    )
+
+    await create_markdown_artifact(
+        key="ripple-workers-job-details",
+        markdown=(
+            "## Ripple Phase 2 — Workers Job\n\n"
+            f"| Field | Value |\n|---|---|\n"
+            f"| Job Name | `{worker_job_name}` |\n"
+            f"| Job ID | `{worker_job_id or 'DRY RUN'}` |\n"
+            f"| Job Definition | `{cfg['worker_job_def']}` |\n"
+            f"| Total Libraries | `{total_items}` |\n"
+            f"| Array Mode | `{array_desc}` |\n"
+        ),
+        description="Ripple workers phase AWS Batch job details",
+    )
+
+    if not dry_run and worker_job_id:
+        array_str = f" (array size={array_size})" if array_size else " (single job)"
+        logger.info("Ripple worker job submitted: %s%s", worker_job_id, array_str)
+        await async_poll_until_complete(batch_client, worker_job_id, worker_job_name, poll_interval)
+
+    return {"phase": "workers", "job_id": worker_job_id, "job_name": worker_job_name}
+
+
+@task(name="Ripple Phase 3 — Merge (summary)")
+async def ripple_submit_and_poll_merge(
+    cfg: dict,
+    timestamp: str,
+    poll_interval: int = 30,
+    dry_run: bool = False,
+) -> dict:
+    """Submit ripple Merge (summary/cleanup) job to Batch and poll until complete."""
+    logger = get_run_logger()
+    batch_client = get_aws_client(cfg["aws_profile"], cfg["aws_region"], "batch")
+
+    merge_params = {
+        "bucket_name": cfg["s3_bucket"],
+        "manifest_s3_key": cfg["manifest_s3_key"],
+        "ripple_success_markers_prefix": cfg["success_markers_prefix"],
+        "ripple_error_retry_prefix": cfg["error_retry_prefix"],
+        "ripple_error_nonretry_prefix": cfg["error_nonretry_prefix"],
+    }
+
+    merge_job_name = f"ripple-merge-{timestamp}"
+    merge_job_id = submit_job(
+        batch_client,
+        job_name=merge_job_name,
+        job_definition=cfg["merge_job_def"],
+        job_queue=cfg["job_queue_name"],
+        parameters=merge_params,
+        dry_run=dry_run,
+    )
+
+    await create_markdown_artifact(
+        key="ripple-merge-job-details",
+        markdown=(
+            "## Ripple Phase 3 — Merge (summary) Job\n\n"
+            f"| Field | Value |\n|---|---|\n"
+            f"| Job Name | `{merge_job_name}` |\n"
+            f"| Job ID | `{merge_job_id or 'DRY RUN'}` |\n"
+            f"| Job Definition | `{cfg['merge_job_def']}` |\n"
+        ),
+        description="Ripple merge/summary phase AWS Batch job details",
+    )
+
+    if not dry_run and merge_job_id:
+        logger.info("Ripple merge job submitted: %s", merge_job_id)
+        await async_poll_until_complete(batch_client, merge_job_id, merge_job_name, poll_interval)
+
+    return {"phase": "merge", "job_id": merge_job_id, "job_name": merge_job_name}
+
+
+@task(name="Ripple Phase 4 — COG conversion")
+async def ripple_submit_and_poll_cog(
+    cfg: dict,
+    timestamp: str,
+    poll_interval: int = 30,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict:
+    """Convert VRT-as-.tif outputs to real COGs, in place. Standalone — run once after a raster run finishes."""
+    logger = get_run_logger()
+    batch_client = get_aws_client(cfg["aws_profile"], cfg["aws_region"], "batch")
+    s3_client = get_aws_client(cfg["s3_profile"], cfg["aws_region"], "s3")
+
+    if dry_run:
+        total_items = 100
+        logger.info("[DRY RUN] Assuming %s libraries for array size calculation", total_items)
+    else:
+        total_items = read_manifest_total(s3_client, cfg["s3_bucket"], cfg["manifest_s3_key"])
+        logger.info("Total libraries (dir_names) in manifest: %s", total_items)
+        if total_items == 0:
+            logger.info("No dir_names in manifest — nothing to convert.")
+            return {"phase": "cog", "job_id": None, "job_name": "SKIPPED (empty manifest)"}
+
+    if limit is not None and limit < total_items:
+        logger.warning("--limit %d set — this is a TEST BATCH, not a full conversion.", limit)
+        total_items = limit
+
+    items_per_job = int(cfg["items_per_job"])
+    if total_items <= items_per_job:
+        array_size = None
+        array_desc = f"single job ({total_items} librar(y/ies) <= {items_per_job}/job)"
+    else:
+        array_size = math.ceil(total_items / items_per_job)
+        array_size = min(array_size, MAX_ARRAY_SIZE)
+        actual_chunk = math.ceil(total_items / array_size)
+        array_desc = f"array job — {array_size} children x ~{actual_chunk} librar(y/ies) each"
+        logger.info("Array size: %s children x ~%s librar(y/ies) each", array_size, actual_chunk)
+
+    cog_params = {
+        "bucket_name": cfg["s3_bucket"],
+        "manifest_s3_key": cfg["manifest_s3_key"],
+        "items_per_job": str(items_per_job),
+    }
+
+    cog_job_name = f"ripple-cog-{timestamp}"
+    cog_job_id = submit_job(
+        batch_client,
+        job_name=cog_job_name,
+        job_definition=cfg["cog_job_def"],
+        job_queue=cfg["job_queue_name"],
+        parameters=cog_params,
+        array_size=array_size,
+        dry_run=dry_run,
+    )
+
+    await create_markdown_artifact(
+        key="ripple-cog-job-details",
+        markdown=(
+            "## Ripple Phase 4 — COG Conversion Job\n\n"
+            f"| Field | Value |\n|---|---|\n"
+            f"| Job Name | `{cog_job_name}` |\n"
+            f"| Job ID | `{cog_job_id or 'DRY RUN'}` |\n"
+            f"| Job Definition | `{cfg['cog_job_def']}` |\n"
+            f"| Total Libraries | `{total_items}` |\n"
+            f"| Array Mode | `{array_desc}` |\n"
+        ),
+        description="Ripple COG conversion job details",
+    )
+
+    if not dry_run and cog_job_id:
+        array_str = f" (array size={array_size})" if array_size else " (single job)"
+        logger.info("Ripple COG job submitted: %s%s", cog_job_id, array_str)
+        await async_poll_until_complete(batch_client, cog_job_id, cog_job_name, poll_interval)
+
+    return {"phase": "cog", "job_id": cog_job_id, "job_name": cog_job_name}
+
+
+# ---------------------------------------------------------------------------
 # Flow — sync
 # ---------------------------------------------------------------------------
 
@@ -485,7 +767,8 @@ def run_pipeline_flow(**kwargs) -> dict:
 
     cfg = build_config(args, tf_outputs)
 
-    missing = [k for k in REQUIRED_CFG_KEYS if cfg.get(k) is None]
+    required_keys = REQUIRED_CFG_KEYS_RIPPLE if args.pipeline == "ripple" else REQUIRED_CFG_KEYS
+    missing = [k for k in required_keys if cfg.get(k) is None]
     if missing:
         raise RuntimeError(
             f"Missing required config values: {', '.join(missing)}. "
@@ -500,6 +783,82 @@ def run_pipeline_flow(**kwargs) -> dict:
         "Queue: %s  Bucket: %s  Manifest: %s",
         cfg["job_queue_name"], cfg["s3_bucket"], cfg["manifest_s3_key"],
     )
+
+    # -----------------------------------------------------------------
+    # Ripple: separate, smaller DAG (split -> array workers -> summary).
+    # -----------------------------------------------------------------
+    if args.pipeline == "ripple":
+        if args.cog_only:
+            cog_future = ripple_submit_and_poll_cog.submit(
+                cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+                limit=args.limit,
+            )
+            cog_result = cog_future.result()
+            create_table_artifact(
+                key="pipeline-summary",
+                table=[{"Phase": "COG", "Job Name": str(cog_result["job_name"]), "Job ID": str(cog_result["job_id"] or "DRY RUN")}],
+                description="Pipeline 'ripple' — COG-only run",
+            )
+            return {"pipeline": "ripple", "dry_run": args.dry_run, "cog_job_id": cog_result["job_id"]}
+
+        if args.skip_split:
+            logger.info("Skipping Phase 1 (split) — using existing manifest on S3")
+            split_result = {"phase": "split", "job_id": None, "job_name": "SKIPPED"}
+            workers_future = ripple_submit_and_poll_workers.submit(
+                cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+            )
+        else:
+            split_future = ripple_submit_and_poll_split.submit(
+                cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+                limit=args.limit,
+            )
+            workers_future = ripple_submit_and_poll_workers.submit(
+                cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+                wait_for=[split_future],
+            )
+            split_result = split_future.result()
+
+        merge_future = ripple_submit_and_poll_merge.submit(
+            cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+            wait_for=[workers_future],
+        )
+
+        workers_result = workers_future.result()
+        merge_result = merge_future.result()
+
+        # COG conversion is standalone — not part of the main split/worker/merge
+        # DAG, run only when explicitly requested (e.g. once after a raster run
+        # is done, not on every test batch).
+        cog_result = {"phase": "cog", "job_id": None, "job_name": "SKIPPED"}
+        if args.run_cog_conversion:
+            cog_future = ripple_submit_and_poll_cog.submit(
+                cfg=cfg, timestamp=timestamp, poll_interval=args.poll_interval, dry_run=args.dry_run,
+                limit=args.limit, wait_for=[merge_future],
+            )
+            cog_result = cog_future.result()
+
+        table = [
+            {"Phase": "Split", "Job Name": str(split_result["job_name"]), "Job ID": str(split_result["job_id"] or "DRY RUN")},
+            {"Phase": "Workers", "Job Name": str(workers_result["job_name"]), "Job ID": str(workers_result["job_id"] or "DRY RUN")},
+            {"Phase": "Merge", "Job Name": str(merge_result["job_name"]), "Job ID": str(merge_result["job_id"] or "DRY RUN")},
+        ]
+        if args.run_cog_conversion:
+            table.append({"Phase": "COG", "Job Name": str(cog_result["job_name"]), "Job ID": str(cog_result["job_id"] or "DRY RUN")})
+
+        create_table_artifact(
+            key="pipeline-summary",
+            table=table,
+            description="Pipeline 'ripple' — all phase job IDs",
+        )
+
+        return {
+            "pipeline": "ripple",
+            "dry_run": args.dry_run,
+            "split_job_id": split_result["job_id"],
+            "worker_job_id": workers_result["job_id"],
+            "merge_job_id": merge_result["job_id"],
+            "cog_job_id": cog_result["job_id"],
+        }
 
     # -----------------------------------------------------------------
     # Task DAG (Split → Workers → Merge)
@@ -608,7 +967,7 @@ def parse_args():
     parser.add_argument(
         "--pipeline",
         required=True,
-        choices=["gfm", "gfm_exp"],
+        choices=["gfm", "gfm_exp", "ripple"],
         help="Which pipeline to run",
     )
     parser.add_argument("--bucket-name", default=None, help="Override S3 bucket")
@@ -616,7 +975,29 @@ def parse_args():
         "--scenes-per-job",
         type=int,
         default=None,
-        help="Override scenes per worker (default: terraform output or 50)",
+        help="Override scenes per worker (default: terraform output or 50). GFM/GFM_EXP only.",
+    )
+    parser.add_argument(
+        "--items-per-job",
+        type=int,
+        default=None,
+        help="Override libraries (dir_names) per ripple worker — each processes all 6 flow intervals per library (default: terraform output or 5). Ripple only.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N outstanding dir_names — for a small initial test batch. Ripple only, omit for a real run.",
+    )
+    parser.add_argument(
+        "--run-cog-conversion",
+        action="store_true",
+        help="After merge, run Phase 4 to convert VRT-as-.tif outputs to real COGs. Ripple only, standalone step.",
+    )
+    parser.add_argument(
+        "--cog-only",
+        action="store_true",
+        help="Run only Phase 4 (COG conversion) against the existing manifest — skips split/workers/merge entirely. Ripple only.",
     )
     parser.add_argument(
         "--workers",

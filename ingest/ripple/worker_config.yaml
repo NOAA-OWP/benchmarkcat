@@ -1,0 +1,49 @@
+# S3 
+s3:
+  bucket: fimc-data
+  paths:
+    # Source data locations
+    ripple_collections: ripple/v0.11.x/successes/
+    library_extent: ripple/v0.11.x/successes/{dir_name}/library_extent/
+    flow_files: reference/nwm_return_period_flows/
+    
+    # Output locations
+    output_base: benchmark/ripple_v0.11.x/{source}/{id}/
+    output_with_common: benchmark/ripple_v0.11.x/{source}/{id}_{common_name}/
+    
+    # Status tracking
+    success_markers: benchmark/ripple_v0.11.x/status/success/
+    error_retry: benchmark/ripple_v0.11.x/status/errors/retry/
+    error_nonretry: benchmark/ripple_v0.11.x/status/errors/nonretry/
+# Naming patterns
+naming:
+  success_marker: "{dir_name}_{flow_file}.success.json"
+  error_marker: "{dir_name}_{flow_file}.error.json"
+  output_file: "{return_period}yr_extent_f2f_ver_0_5_0.tif"
+  output_with_common: "{return_period}yr_{common_name}_extent_f2f_ver_0_5_0.tif"
+  control_file: "{source}_{digit_string}{common_suffix}_{return_period}yr_controls.csv"
+# Local directories
+work_dirs:
+  base: /tmp/f2f_work
+  ripple_library: ripple_library
+  control_files: control_files
+  output: output
+# Processing configuration
+processing:
+  flows2fim_path: flows2fim # This is what the binary is called in the docker image
+  output_format: cog
+
+# Processed per dir_name in one job. Mirrors coord_config.yaml's flow_files for the Nomad coordinator.
+flow_files:
+  - name: flows_2year.csv
+    return_period: 2
+  - name: flows_5year.csv
+    return_period: 5
+  - name: flows_10year.csv
+    return_period: 10
+  - name: flows_25year.csv
+    return_period: 25
+  - name: flows_50year.csv
+    return_period: 50
+  - name: flows_100year.csv
+    return_period: 100

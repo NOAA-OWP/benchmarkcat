@@ -185,7 +185,7 @@
                         "type": "string",
                         "pattern": "^[0-9]{8}$"
                       },
-                      "description": "List of HUC8 watershed identifiers with significant flood activity (High impact and B grade or better)."
+                      "description": "List of HUC8 watershed identifiers with quality grade A or B."
                     },
                     "owp:total_flood_area_km2": {
                       "title": "OWP Total Flood Area",

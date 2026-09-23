@@ -93,3 +93,25 @@ output "gfm_exp_config" {
     derived_metadata_path  = var.gfm_exp_derived_metadata_path
   }
 }
+
+output "ripple_ecr_repository_url" {
+  description = "ECR repository URL for the ripple worker image (docker push target)"
+  value       = aws_ecr_repository.ripple.repository_url
+}
+
+output "ripple_job_definition_names" {
+  description = "Map of ripple phase key to job definition name"
+  value       = { for k, v in aws_batch_job_definition.ripple_jobs : k => v.name }
+}
+
+output "ripple_config" {
+  description = "Ripple pipeline S3 paths"
+  value = {
+    asset_object_key       = var.ripple_asset_object_key
+    manifest_s3_key        = var.ripple_manifest_s3_key
+    success_markers_prefix = var.ripple_success_markers_prefix
+    error_retry_prefix     = var.ripple_error_retry_prefix
+    error_nonretry_prefix  = var.ripple_error_nonretry_prefix
+    items_per_job          = var.ripple_items_per_job
+  }
+}

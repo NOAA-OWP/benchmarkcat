@@ -6,12 +6,22 @@ set -o pipefail
 # Benchmarkcat — Build Docker image and push to ECR
 #
 # Usage:
-#   ./scripts/build_and_push.sh
+#   ./scripts/build_and_push.sh             # main ingest image (Dockerfile)
+#   ./scripts/build_and_push.sh ripple      # ripple worker image (Dockerfile.ripple)
 #
 # Reads aws_account_id, aws_region, aws_profile from terraform outputs.
 # Falls back to AWS_ACCOUNT_ID, AWS_REGION, AWS_PROFILE env vars.
-# Override ECR URL with ECR_REPO env var.
+# Override ECR URL with ECR_REPO env var, flows2fim version with FLOWS2FIM_VERSION.
 # ---------------------------------------------------------------------------
+
+TARGET="${1:-main}"
+if [ "$TARGET" = "ripple" ]; then
+  DOCKERFILE="Dockerfile.ripple"
+  TF_OUTPUT_KEY="ripple_ecr_repository_url"
+else
+  DOCKERFILE="Dockerfile"
+  TF_OUTPUT_KEY="ecr_repository_url"
+fi
 
 # Read from terraform outputs first, then env vars (no hardcoded defaults)
 if [ -d "terraform" ] && command -v terraform &>/dev/null; then
@@ -38,7 +48,7 @@ fi
 if [ -n "$ECR_REPO" ]; then
   echo "Using ECR_REPO from environment: $ECR_REPO"
 elif [ -d "terraform" ] && command -v terraform &>/dev/null; then
-  ECR_REPO=$(cd terraform && terraform output -raw ecr_repository_url 2>/dev/null) || true
+  ECR_REPO=$(cd terraform && terraform output -raw "$TF_OUTPUT_KEY" 2>/dev/null) || true
 fi
 
 if [ -z "$ECR_REPO" ]; then
@@ -60,8 +70,13 @@ aws ecr get-login-password \
     "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
 # 2. Build
-echo "Building Docker image (linux/amd64)..."
-docker build --platform linux/amd64 -t "${PROJECT_NAME}" .
+BUILD_ARGS=()
+if [ "$TARGET" = "ripple" ]; then
+  BUILD_ARGS+=(--build-arg "FLOWS2FIM_VERSION=${FLOWS2FIM_VERSION:-0.5.0}")
+  echo "Using flows2fim version: ${FLOWS2FIM_VERSION:-0.5.0}"
+fi
+echo "Building Docker image (linux/amd64) from ${DOCKERFILE}..."
+docker build --platform linux/amd64 -f "$DOCKERFILE" "${BUILD_ARGS[@]}" -t "${PROJECT_NAME}" .
 
 # 3. Tag
 docker tag "${PROJECT_NAME}:latest" "${ECR_REPO}:latest"
