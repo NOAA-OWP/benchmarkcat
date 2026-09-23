@@ -19,6 +19,8 @@ Below are the primary variables required for a successful deployment.
 ### terraform.tfvars
 The following example demonstrates a typical configuration for a standalone deployment. Replace these placeholder values with your own environment-specific data.
 
+# TODO: Sep 2026: Do we update this based on the OWP customizations?
+
 ```hcl
 # Core Environment Settings
 environment        = "test"
@@ -41,8 +43,9 @@ additional_vpc_cidrs = ["10.0.0.0/16"]
 enterprise_mode = false
 
 # Application Versions
-api_image_version     = "4.0.3"
-browser_image_version = "3.3.4"
+stac_version = "v0.9.11"
+stac_fastapi_image_version = "6.4.0"
+stac_browser_image_version = "5.1.0"
 
 # S3 Access Configuration
 # Define buckets the application should read from and where to store backups

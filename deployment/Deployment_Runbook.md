@@ -59,7 +59,7 @@ aws s3 mb s3://hv-fim-dev-data --region us-east-1
 The Terraform configuration and migration scripts are in the repo — clone it locally before proceeding.
 
 ```bash
-git clone https://github.com/NGWPC/benchmarkcat.git ~/benchmarkcat -b owp-deployment
+git clone https://github.com/NOAA-OWP/benchmarkcat.git ~/benchmarkcat -b owp-deployment
 ```
 
 ### 1.2 Create Configuration
@@ -86,7 +86,8 @@ log_retention_days   = 7
 # key_name = "your-aws-key-pair-name"  # Optional: required for SSH access
 ```
 
-Create `backend.tf` for remote state (S3 backend recommended).
+(recommend putting this file in S3 instead of keeping it local).
+Create `backend.tf` for remote state (recommend putting this file in SS3 backend recommended).
 
 ### 1.3 Deploy
 ```bash

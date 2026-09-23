@@ -6,6 +6,8 @@
 # Instance Type: t3.xlarge (4 vCPU, 16 GB RAM)
 # OS: Ubuntu 22.04 or Ubuntu 24.04
 #
+# NOTE:
+# Sept 2026: This is a bit outdated now, look at user_data_standalone.sh.tpl to update
 #
 ################################################################################
 
@@ -912,7 +914,7 @@ Loading Catalog Data:
 ---------------------
 # 1. Clone the benchmarkcat repository to get loading scripts
 cd /opt/benchmarkcat
-git clone https://github.com/NGWPC/benchmarkcat.git repo
+git clone https://github.com/NOAA-OWP/benchmarkcat.git repo
 # Or copy scripts from your local repository
 
 # 2. Dry run to preview what would be loaded

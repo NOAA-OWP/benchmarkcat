@@ -23,6 +23,12 @@ output "standalone_instance_ip" {
   value       = local.is_standalone ? aws_instance.standalone_instance[0].private_ip : null
 }
 
+output "standalone_instance_id" {
+  description = "The aws EC2 instance ID of the EC2 instance"
+  value       = local.is_standalone ? aws_instance.standalone_instance[0].id : null
+}
+
+
 output "load_balancer_dns" {
   description = "The raw DNS name of the Application Load Balancer (if in enterprise mode)"
   value       = !local.is_standalone ? aws_lb.app[0].dns_name : null
@@ -32,7 +38,12 @@ output "load_balancer_dns" {
 # Helpful Commands
 # ==========================================
 
-output "ssh_instructions" {
-  description = "Helpful command for connecting to the standalone instance"
+output "ssh_instructions_non_sso" {
+  description = "Helpful command for connecting to the standalone instance for non SSO"
   value       = local.is_standalone ? "ssh -i /path/to/key.pem ubuntu@${aws_instance.standalone_instance[0].private_ip}" : "Use Session Manager to connect to the ASG instances."
+}
+
+output "ssh_instructions_sso" {
+  description = "Helpful command for connecting to the standalone instance for SSO"
+  value       = "aws ssm start-session --target ${aws_instance.standalone_instance[0].id} --profile (your profile name if necessary)"
 }

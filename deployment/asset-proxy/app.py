@@ -24,6 +24,8 @@ app.add_middleware(
 # S3 client with IAM role credentials
 s3_client = boto3.client('s3', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
 
+# TODO: Sep 2026:  update this to match discoveries and updates in the user_data_standalone.sh.tpl file.
+
 
 @app.get('/health')
 @app.head('/health')
@@ -176,7 +178,7 @@ def proxy_s3_asset(bucket: str, path: str, request: Request):
 
 if __name__ == "__main__":
     uvicorn.run(
-        app,
+        "main:app",
         host="0.0.0.0",
         port=int(os.environ.get('PORT', '8083')),
         log_level=os.environ.get('LOG_LEVEL', 'info').lower()

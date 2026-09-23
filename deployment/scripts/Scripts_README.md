@@ -9,22 +9,29 @@ Utility scripts for managing STAC catalogs and deployment operations.
 ### load_catalog.py
 Loads STAC catalog (catalog.json, collections, items) into pgstac database.
 
+See more details and steps in the Deployment_Runbook.md - Phase 3
+
 **Installation:**
 ```bash
 # After bootstrap - clone repository
 cd /opt/benchmarkcat
-git clone https://github.com/NGWPC/benchmarkcat.git
+repo_path="/opt/benchmarkcat/repo"
+git clone https://github.com/NOAA-OWP/benchmarkcat.git $repo_path
 
-# For local development
-pip install -r requirements.txt
+# For local development - The pip packages are likely already there as it is in the tpl scripts.
+# But it does not hurt to run it again
+pip install -r "${repo_path}/deployment/scripts/requirements.txt"
 ```
 
 **Quick Start:**
 ```bash
 # get the postgres_password
 grep POSTGRES_PASSWORD /var/log/benchmarkcat/bootstrap.log
+# Another way to do this is: 
 
 # Dry run (preview)
+mkdir -p /stac-catalog  # or wherever
+cd "${repo_path}/deployment/scripts"
 python3 load_catalog.py /path/to/catalog --db-host localhost --db-password < password from above > --dry-run
 
 # Load catalog
@@ -83,6 +90,7 @@ docker ps | grep benchmarkcat-db
 docker exec benchmarkcat-db pg_isready -U pgstac -d stacdb
 
 # Check password
+# Note: This might not exist if the password was overridden in variables.tf
 cat /opt/benchmarkcat/.db_password
 
 # View logs
@@ -102,6 +110,7 @@ Tests the asset-proxy service functionality and verifies it can access S3 assets
 
 **Usage:**
 ```bash
+# terminal is still at ${repo_path}/deployment/scripts"
 sudo ./test_asset_proxy.sh
 ```
 
@@ -172,12 +181,15 @@ sudo ./test_asset_proxy.sh
 **Usage:**
 ```bash
 # Get database password
+# Note: this password value may not exist if doing a test with the overwridden password
 export PGPASSWORD=$(grep POSTGRES_PASSWORD /var/log/benchmarkcat/bootstrap.log | sed 's/.*POSTGRES_PASSWORD=//')
 
 # Get host IP for VPC access
 export HOST_IP=$(hostname -I | awk '{print $1}')
 
-# Dry run (preview changes)
+####################
+# You can use one or more of these below. They are samples
+# Dry run (preview changes)  (8083 ?)
 python3 rewrite_asset_urls.py --proxy-url http://${HOST_IP}:8083 --db-host localhost --db-password $PGPASSWORD --dry-run
 
 # Apply changes for VPC access
@@ -188,6 +200,7 @@ python3 rewrite_asset_urls.py --proxy-url http://localhost:8083 --db-host localh
 
 # Or use external domain name
 python3 rewrite_asset_urls.py --proxy-url http://your-domain.com:8083 --db-host localhost --db-password $PGPASSWORD
+####################
 ```
 
 **What it does:**

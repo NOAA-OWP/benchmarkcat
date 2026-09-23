@@ -368,6 +368,12 @@ def load_catalog(
         print(f"Processing collection: {collection_id}")
         print(f"  Path: {collection_dir}")
 
+        # Sep 2026: TEMP: Bug loading some collection types, 
+        if collection_id == "gfm-expanded-collection":
+            print("  Temp skipping: data issue in collection")
+            print("")
+            continue
+
         # Load collection
         if not dry_run:
             success, message = load_collection_to_pgstac(conn, collection_data)

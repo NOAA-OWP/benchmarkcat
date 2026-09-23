@@ -186,7 +186,7 @@ systemctl is-active benchmarkcat
 # Expect: "active"
 ```
 
-Backup cron job — verify Sunday 2 AM schedule exists:
+Backup cron job — verify Sat 11 PM schedule exists:
 ```bash
 crontab -l | grep backup-db.sh
 # Expect: line containing "0 2 * * 0" and backup-db.sh

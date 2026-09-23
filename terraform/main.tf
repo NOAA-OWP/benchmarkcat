@@ -40,7 +40,8 @@ resource "aws_ecr_repository" "app" {
 # Batch Compute Environment (SPOT or On-Demand, CPU-only)
 # -----------------------------------------------------------------------------
 resource "aws_batch_compute_environment" "cpu" {
-  compute_environment_name = "${var.project_name}-cpu-${var.use_spot ? "spot" : "ec2"}"
+  # TODO: error, not all args are valid, needs fixing
+  # compute_environment_name = "${var.project_name}-cpu-${var.use_spot ? "spot" : "ec2"}"
   type                     = "MANAGED"
   state                    = "ENABLED"
   service_role             = var.batch_service_role_arn
