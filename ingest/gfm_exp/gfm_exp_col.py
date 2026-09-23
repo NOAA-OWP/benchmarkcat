@@ -428,19 +428,22 @@ def process_tile(
     geometry = asset_results["geometry"]
     huc8_list = []
 
-    if geometry:
-        # Check if geometry is within Canada or Mexico before proceeding
-        if country_boundaries and is_within_neighbor_countries(geometry, country_boundaries):
-            logging.info(f"Skipping {sent_ti} - geometry lies completely within Canada or Mexico")
-            return (None, None)
+    if not geometry:
+        logging.warning("Skipping %s - no valid geometry (null footprint)", sent_ti)
+        return (None, None)
 
-        # Find intersecting HUC8s if HUCs data is provided
-        if hucs_gdf is not None:
-            # Create a GeoDataFrame with the flood geometry
-            flood_gdf = gpd.GeoDataFrame(geometry=[shape(geometry)], crs=hucs_gdf.crs)
-            # Perform spatial join
-            huc_join = gpd.sjoin(flood_gdf, hucs_gdf, how="left", predicate="intersects")
-            huc8_list = huc_join["HUC8"].tolist() if "HUC8" in huc_join.columns else []
+    # Check if geometry is within Canada or Mexico before proceeding
+    if country_boundaries and is_within_neighbor_countries(geometry, country_boundaries):
+        logging.info(f"Skipping {sent_ti} - geometry lies completely within Canada or Mexico")
+        return (None, None)
+
+    # Find intersecting HUC8s if HUCs data is provided
+    if hucs_gdf is not None:
+        # Create a GeoDataFrame with the flood geometry
+        flood_gdf = gpd.GeoDataFrame(geometry=[shape(geometry)], crs=hucs_gdf.crs)
+        # Perform spatial join, filtering NaN from unmatched left-join rows
+        huc_join = gpd.sjoin(flood_gdf, hucs_gdf, how="left", predicate="intersects")
+        huc8_list = [v for v in huc_join["HUC8"].tolist() if v == v] if "HUC8" in huc_join.columns else []
 
     flood_ratios = get_flood_ratios(s3_utils, bucket_name, sent_ti_path)
 

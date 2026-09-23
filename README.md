@@ -28,7 +28,7 @@ benchmarkcat/
 │   ├── iceye/                # ICEYE ingestion
 │   ├── ahps/                 # AHPS FIM ingestion
 │   ├── hwm/                  # High water marks ingestion
-│   └── ripple/               # Ripple collection ingestion
+│   └── ripple/               # Ripple ingestion (batch_split, extent_worker, batch_merge, ripple_col)
 ├── schemas/                   # JSON Schema definitions
 │   ├── ble/v1.0.0/
 │   ├── iceye/v1.0.0/
@@ -50,6 +50,7 @@ benchmarkcat/
 ├── docs/                      # Additional documentation
 │   └── aws-batch-pipeline.md # AWS Batch pipeline setup and reference
 ├── Dockerfile                 # Container image for ingest jobs
+├── Dockerfile.ripple           # GDAL + flows2fim image for the ripple worker (separate from Dockerfile)
 ├── Dockerfile.orchestration   # Lightweight container for Prefect orchestrator + Terraform
 ├── setup.py                   # Package setup
 └── requirements.txt           # Python dependencies
@@ -207,15 +208,19 @@ docker run --rm \
   python3 scripts/run_pipeline_prefect.py --help
 ```
 
-### Batch pipeline (GFM and GFM Expanded)
+### Batch pipeline (GFM, GFM Expanded, and Ripple)
 
 GFM and GFM expanded support a 3-phase batch workflow for scaling to many scenes. For local testing, run Phase 1, then Phase 2 (e.g. with `--job-index 0`), then Phase 3. All examples below use placeholder S3 paths under `benchmark/stac-bench-cat/` and `benchmark/rs/`; replace with your bucket and paths as needed.
 
-For AWS Batch deployment (Terraform, Docker build/push, and the `run_pipeline_prefect.py` Prefect orchestrator), see **[docs/aws-batch-pipeline.md](docs/aws-batch-pipeline.md)**.
+Ripple (`ingest/ripple/`) follows the same split/workers/merge pattern through the same orchestrator (`--pipeline ripple`), but the unit of work is one ripple library (`dir_name`) instead of one scene, with each worker processing all 6 NWM return-period intervals for its library sequentially.
+
+For AWS Batch deployment (Terraform, Docker build/push, and the `run_pipeline_prefect.py` Prefect orchestrator, covering all three pipelines), see **[docs/aws-batch-pipeline.md](docs/aws-batch-pipeline.md)**.
 
 Date filters (`--after-date`, `--before-date`, `--dates`) are applied **only at Phase 1 (batch_split)**. Phase 2 workers process their slice of the manifest as-is and do not re-apply date filters; this avoids double filtering. When Phase 1 uses date filters, a **sidecar metadata file** is written at `<manifest_s3_key>.meta.json` with `total_scenes`, `manifest_s3_key`, `created_at`, and when applicable `after_date`, `before_date`, and/or `dates` so you can see what filters were used when the manifest was built.
 
-**Crash recovery & skip logic:** Phase 2 workers automatically skip scenes that were already fully processed (parquet row exists and item JSON is present on S3). On startup, each worker loads the master parquet *and* any existing partial parquets from previous runs, so scenes completed by sibling workers before a crash are recognized and not reprocessed. Only newly processed scenes are written to this worker's partial parquet.
+**Crash recovery & skip logic:** Phase 2 workers automatically skip scenes that were already fully processed (parquet row exists and item JSON is present on S3). On startup, each worker loads the master parquet *and* any existing partial parquets from previous runs, so scenes completed by sibling workers before a crash are recognized and not reprocessed. Only newly processed scenes are written to this worker's partial parquet. Ripple's split is idempotent the same way: `batch_split.py` re-lists `dir_name`s and markers from S3 fresh on every run, with no state file, so reruns after a partial delivery only pick up what's new.
+
+**Ripple's `worker_config.yaml` drift risk:** ripple's S3 paths, naming templates, flow intervals, and flows2fim version are baked into the Docker image at build time and are not Terraform-managed. Editing this file has no effect until the image is rebuilt and pushed; `terraform plan` won't catch a mismatch, and jobs keep running whatever was baked in at the last build, silently.
 
 #### GFM batch
 
@@ -416,6 +421,39 @@ docker run --rm \
   2>&1 | tee logs/gfm_exp_col_run_merge.log
 ```
 
+#### Ripple batch
+
+Ripple's unit of work is one library (`dir_name`) rather than one scene; `extent_worker.py` processes all 6 NWM return-period intervals for a library sequentially. Uses `Dockerfile.ripple`, a separate GDAL + `flows2fim` image from the main `Dockerfile` used above. Requires the `benchmarkcat-ripple` image (`docker build -f Dockerfile.ripple -t benchmarkcat-ripple:local .`); for AWS Batch deployment, see [docs/aws-batch-pipeline.md](docs/aws-batch-pipeline.md).
+
+**Phase 1, Split** (discover outstanding ripple libraries, write manifest to S3; `--limit N` caps it to the first N for a small test batch):
+
+```bash
+python3 -m ingest.ripple.batch_split \
+  --bucket_name fimc-data \
+  --asset_object_key ripple/v0.11.x/successes/ \
+  --manifest-s3-key benchmark/ripple_v0.11.x/batch/ripple_manifest.jsonl \
+  --limit 5 \
+  --profile Data
+```
+
+**Phase 2, Worker** (process one library's 6 intervals; for a manifest-driven array job use `--manifest-s3-key`, `--job-index`, and `--items-per-job` instead of `--dir_name`):
+
+```bash
+python3 -m ingest.ripple.extent_worker \
+  --bucket_name fimc-data \
+  --dir_name <a dir_name under ripple/v0.11.x/successes/> \
+  --profile Data
+```
+
+**Phase 3, Merge** (reconcile the manifest against success/error markers, report results):
+
+```bash
+python3 -m ingest.ripple.batch_merge \
+  --bucket_name fimc-data \
+  --manifest-s3-key benchmark/ripple_v0.11.x/batch/ripple_manifest.jsonl \
+  --profile Data
+```
+
 ### Command Line Arguments
 
 Common arguments across all ingestion scripts:
@@ -438,6 +476,8 @@ GFM and GFM Expanded additionally support:
 - **Date filters:** `--after-date` (YYYY-MM-DD), `--before-date` (YYYY-MM-DD), `--dates` (comma-separated list). Limit processing to a date range or specific dates. **GFM-exp:** filters by date folder (top-level PI4 dirs). **GFM:** filters by scene acquisition date (parsed from Sentinel product name in path). Applied in order: after_date, then before_date, then dates list.
 
 Batch-worker mode (GFM/GFM-exp) also uses: `--mode batch-worker`, `--manifest-s3-key`, `--partial-parquet-prefix`, `--job-index` (or `AWS_BATCH_JOB_ARRAY_INDEX`, `AZ_BATCH_TASK_ID`, `BATCH_TASK_INDEX`), `--scenes-per-job`, `--workers`
+
+`ripple_col.py` (STAC cataloging) follows the common arguments above. Ripple's batch scripts (`batch_split.py`, `extent_worker.py`, `batch_merge.py`) do not; they use their own flag set instead: `--manifest-s3-key`, `--dir_name` (single library, `extent_worker.py`), `--limit` (`batch_split.py`, caps to the first N outstanding libraries), `--items-per-job`/`--job-index` (array-job mode), `--success-markers-prefix`, `--error-retry-prefix`/`--error-nonretry-prefix`, `--config-path` (defaults to `worker_config.yaml`). See [Ripple batch](#ripple-batch) above for examples.
 
 ### Processing Pipeline
 

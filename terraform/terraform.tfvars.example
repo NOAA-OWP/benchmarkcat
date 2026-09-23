@@ -2,7 +2,9 @@
 aws_region     = "us-east-1"
 aws_profile    = "your-aws-profile"
 aws_account_id = "123456789012"
-project_name   = "benchmarkcat"
+# project_name namespaces every resource this stack creates. Pick a distinct value if another
+# deployment already exists in the same account/region — there's no shared backend to prevent collisions.
+project_name = "benchmarkcat"
 
 # IAM roles (existing — not managed by Terraform)
 batch_job_role_arn     = "arn:aws:iam::123456789012:role/Batch-Job-Role"
@@ -55,3 +57,11 @@ gfm_exp_asset_object_key       = "data-gfm-exp/"
 gfm_exp_manifest_s3_key        = "stac/batch/gfm_exp_manifest.jsonl"
 gfm_exp_partial_parquet_prefix = "stac/batch/gfm_exp_partials"
 gfm_exp_derived_metadata_path  = "stac/assets/gfm_expanded_collection.parquet"
+
+# Ripple paths (flows2fim extent generation — STAC cataloging is separate)
+ripple_asset_object_key      = "ripple/v0.11.x/successes/"
+ripple_manifest_s3_key       = "benchmark/ripple_v0.11.x/batch/ripple_manifest.jsonl"
+ripple_success_markers_prefix = "benchmark/ripple_v0.11.x/status/success/"
+ripple_error_retry_prefix     = "benchmark/ripple_v0.11.x/status/errors/retry/"
+ripple_error_nonretry_prefix  = "benchmark/ripple_v0.11.x/status/errors/nonretry/"
+ripple_items_per_job          = 5

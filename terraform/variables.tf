@@ -260,6 +260,81 @@ variable "gfm_exp_derived_metadata_path" {
 }
 
 # -----------------------------------------------------------------------------
+# Ripple pipeline (flows2fim extent generation)
+# -----------------------------------------------------------------------------
+variable "ripple_asset_object_key" {
+  description = "S3 prefix containing ripple library directories (ripple.gpkg, start_reaches.csv, library_extent/)"
+  type        = string
+  default     = "ripple/v0.11.x/successes/"
+}
+
+variable "ripple_manifest_s3_key" {
+  description = "S3 key where the ripple (dir_name, flow_file) work-item manifest JSONL is written"
+  type        = string
+}
+
+variable "ripple_success_markers_prefix" {
+  description = "S3 prefix for ripple success markers"
+  type        = string
+  default     = "benchmark/ripple_v0.11.x/status/success/"
+}
+
+variable "ripple_error_retry_prefix" {
+  description = "S3 prefix for ripple retry-error markers"
+  type        = string
+  default     = "benchmark/ripple_v0.11.x/status/errors/retry/"
+}
+
+variable "ripple_error_nonretry_prefix" {
+  description = "S3 prefix for ripple non-retry-error markers"
+  type        = string
+  default     = "benchmark/ripple_v0.11.x/status/errors/nonretry/"
+}
+
+variable "ripple_items_per_job" {
+  description = "Number of (dir_name, flow_file) work items each ripple worker array child processes"
+  type        = number
+  default     = 5
+}
+
+# Sized from the largest library tested (mip_03070103): peak memory ~215MB, low CPU, I/O-bound.
+variable "ripple_worker_vcpus" {
+  description = "vCPUs for ripple worker job (flows2fim + GDAL, I/O-bound — see sizing note above)"
+  type        = number
+  default     = 2
+}
+
+variable "ripple_worker_memory" {
+  description = "Memory (MB) for ripple worker job"
+  type        = number
+  default     = 4096 # 4 GB — ~18x headroom over the ~215MB observed peak
+}
+
+variable "ripple_worker_timeout" {
+  description = "Timeout (seconds) for ripple worker job. Each job processes ripple_items_per_job libraries, looping all 6 flow intervals per library internally — size for worst-case (items_per_job x 6) sequential flows2fim runs, not a single interval. output_format is now cog (was vrt), which took ~2x as long per interval in a local timing test (2.5 min vrt vs ~5 min cog on one library/interval) — kept generous headroom here rather than tightening."
+  type        = number
+  default     = 43200 # 12 hr
+}
+
+variable "ripple_cog_vcpus" {
+  description = "vCPUs for ripple COG-conversion job (gdal_translate, I/O-bound against many small /vsis3/ reads per file)"
+  type        = number
+  default     = 2
+}
+
+variable "ripple_cog_memory" {
+  description = "Memory (MB) for ripple COG-conversion job"
+  type        = number
+  default     = 2048 # 2 GB — outputs are all <1.2MB, no chunking needed
+}
+
+variable "ripple_cog_timeout" {
+  description = "Timeout (seconds) for ripple COG-conversion job. Dominated by many small S3 reads per file, not compute — size generously."
+  type        = number
+  default     = 14400 # 4 hr
+}
+
+# -----------------------------------------------------------------------------
 # Docker / Observability
 # -----------------------------------------------------------------------------
 variable "image_tag" {

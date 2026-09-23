@@ -1,0 +1,30 @@
+# flows2fim binary: https://github.com/NGWPC/flows2fim/pkgs/container/flows2fim
+ARG FLOWS2FIM_VERSION=0.5.0
+FROM ghcr.io/ngwpc/flows2fim:${FLOWS2FIM_VERSION} AS flows2fim
+
+# GDAL Ubuntu image for /vsis3/ support
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.2
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# build-essential/python3-dev/libgdal-dev/libgeos-dev: needed to build fiona/rasterio from source
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-pip python3-dev build-essential libgdal-dev libgeos-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && rm -f /usr/lib/python3.*/EXTERNALLY-MANAGED
+
+WORKDIR /app
+
+COPY --from=flows2fim /usr/bin/flows2fim /usr/local/bin/flows2fim
+RUN chmod +x /usr/local/bin/flows2fim
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY ingest/ ./ingest/
+COPY scripts/batch-entrypoint.sh ./scripts/batch-entrypoint.sh
+RUN chmod +x ./scripts/batch-entrypoint.sh
+
+ENTRYPOINT ["./scripts/batch-entrypoint.sh"]

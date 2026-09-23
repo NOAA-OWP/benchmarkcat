@@ -38,5 +38,8 @@ fi
 if [ -n "$KEEP_PARTIALS" ] && [ "$KEEP_PARTIALS" != "0" ]; then
     EXTRA_ARGS+=(--keep-partials)
 fi
+if [ -n "$LIMIT" ]; then
+    EXTRA_ARGS+=(--limit "$LIMIT")
+fi
 
 exec python3 -m "$@" "${EXTRA_ARGS[@]}"

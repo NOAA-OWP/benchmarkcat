@@ -22,10 +22,24 @@ provider "aws" {
 }
 
 # -----------------------------------------------------------------------------
-# ECR Repository
+# ECR Repositories
 # -----------------------------------------------------------------------------
 resource "aws_ecr_repository" "app" {
   name                 = var.project_name
+  image_tag_mutability = "MUTABLE"
+  force_delete         = var.ecr_force_delete
+
+  image_scanning_configuration {
+    scan_on_push = false
+  }
+
+  tags = local.tags
+}
+
+# Separate repo for the ripple worker image (Dockerfile.ripple, needs GDAL + flows2fim).
+# TODO: doubles up if project_name contains "ripple" (e.g. "benchmarkcat-ripple-ripple"). Harmless, just ugly.
+resource "aws_ecr_repository" "ripple" {
+  name                 = "${var.project_name}-ripple"
   image_tag_mutability = "MUTABLE"
   force_delete         = var.ecr_force_delete
 
@@ -63,6 +77,8 @@ resource "aws_batch_compute_environment" "cpu" {
 
   lifecycle {
     create_before_destroy = true
+    # Batch scales desired_vcpus at runtime; without this, applying while jobs are running scales it back to 0.
+    ignore_changes = [compute_resources[0].desired_vcpus]
   }
 }
 
@@ -198,6 +214,66 @@ locals {
       )
     }
   }
+
+  # Ripple job definitions use their own image, kept out of local.job_definitions above.
+  # TODO: same project_name-contains-"ripple" doubling as aws_ecr_repository.ripple.
+  ripple_job_definitions = {
+    "ripple-split" = {
+      image   = "${aws_ecr_repository.ripple.repository_url}:${var.image_tag}"
+      vcpus   = var.split_vcpus
+      memory  = var.split_memory
+      timeout = var.split_timeout
+      command = [
+        "ingest.ripple.batch_split",
+        "--bucket_name", "Ref::bucket_name",
+        "--asset_object_key", "Ref::ripple_asset_object_key",
+        "--manifest-s3-key", "Ref::manifest_s3_key",
+        "--success-markers-prefix", "Ref::ripple_success_markers_prefix",
+        "--error-nonretry-prefix", "Ref::ripple_error_nonretry_prefix",
+      ]
+    }
+    "ripple-worker" = {
+      image   = "${aws_ecr_repository.ripple.repository_url}:${var.image_tag}"
+      vcpus   = var.ripple_worker_vcpus
+      memory  = var.ripple_worker_memory
+      timeout = var.ripple_worker_timeout
+      command = [
+        "ingest.ripple.extent_worker",
+        "--bucket_name", "Ref::bucket_name",
+        "--manifest-s3-key", "Ref::manifest_s3_key",
+        "--items-per-job", "Ref::items_per_job",
+      ]
+    }
+    "ripple-merge" = {
+      image   = "${aws_ecr_repository.ripple.repository_url}:${var.image_tag}"
+      vcpus   = var.merge_vcpus
+      memory  = var.merge_memory
+      timeout = var.merge_timeout
+      command = [
+        "ingest.ripple.batch_merge",
+        "--bucket_name", "Ref::bucket_name",
+        "--manifest-s3-key", "Ref::manifest_s3_key",
+        "--success-markers-prefix", "Ref::ripple_success_markers_prefix",
+        "--error-retry-prefix", "Ref::ripple_error_retry_prefix",
+        "--error-nonretry-prefix", "Ref::ripple_error_nonretry_prefix",
+      ]
+    }
+    # Converts VRT-as-.tif outputs to real COGs, in place. Each VRT references
+    # hundreds of small source tiles over /vsis3/, so this must run in-region
+    # on Batch, not locally — see docs/aws-batch-pipeline.md.
+    "ripple-cog" = {
+      image   = "${aws_ecr_repository.ripple.repository_url}:${var.image_tag}"
+      vcpus   = var.ripple_cog_vcpus
+      memory  = var.ripple_cog_memory
+      timeout = var.ripple_cog_timeout
+      command = [
+        "ingest.ripple.cog_worker",
+        "--bucket_name", "Ref::bucket_name",
+        "--manifest-s3-key", "Ref::manifest_s3_key",
+        "--items-per-job", "Ref::items_per_job",
+      ]
+    }
+  }
 }
 
 resource "aws_batch_job_definition" "jobs" {
@@ -218,6 +294,44 @@ resource "aws_batch_job_definition" "jobs" {
 
   container_properties = jsonencode({
     image      = "${aws_ecr_repository.app.repository_url}:${var.image_tag}"
+    jobRoleArn = var.batch_job_role_arn
+    command    = each.value.command
+
+    resourceRequirements = [
+      { type = "VCPU", value = tostring(each.value.vcpus) },
+      { type = "MEMORY", value = tostring(each.value.memory) }
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = "/aws/batch/${var.project_name}"
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = each.key
+      }
+    }
+  })
+}
+
+# Separate resource because these use the aws_ecr_repository.ripple image, not the shared app image.
+resource "aws_batch_job_definition" "ripple_jobs" {
+  for_each = local.ripple_job_definitions
+
+  name           = "${var.project_name}-${each.key}"
+  type           = "container"
+  propagate_tags = true
+  tags           = local.tags
+
+  timeout {
+    attempt_duration_seconds = each.value.timeout
+  }
+
+  retry_strategy {
+    attempts = var.retry_attempts
+  }
+
+  container_properties = jsonencode({
+    image      = each.value.image
     jobRoleArn = var.batch_job_role_arn
     command    = each.value.command
 
