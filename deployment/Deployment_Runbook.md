@@ -2,7 +2,7 @@
 
 ## Overview & Architecture
 
-BenchmarkCat is a STAC geospatial catalog (~23,800 items, 8 collections, ~1.5 TB assets) migrating from NGWPC's infrastructure to OWP's infrastructure.
+BenchmarkCat is a STAC geospatial catalog (~23,000 items, 8 collections, ~2.08 TB assets) migrating from NGWPC's infrastructure to OWP's infrastructure.
 
 | Component | Details |
 |-----------|---------|
@@ -158,7 +158,7 @@ Verify all 8 path mappings are displayed (`PATH_MAPPINGS` in `migrate_s3.py`):
 | Collection | Source | Destination (under `hv-fim-dev-data/benchmark/`) |
 |---|---|---|
 | ble-collection | `benchmark/high_resolution_validation_data_ble` | `ble-collection/` |
-| ripple-fim-collection | `benchmark/ripple_fim_100` | `ripple-fim-collection/` |
+| ripple-fim-collection | `benchmark/ripple_v0.11.x` | `ripple-fim-collection/` |
 | hwm-collection | `benchmark/high_water_marks/usgs` | `hwm-collection/` |
 | nws-fim-collection | `hand_fim/test_cases/nws_test_cases/validation_data_nws` | `nws-fim-collection/` |
 | usgs-fim-collection | `hand_fim/test_cases/usgs_test_cases/validation_data_usgs` | `usgs-fim-collection/` |
@@ -202,7 +202,7 @@ python3 migrate_s3.py \
 
 ### 2.3 Verify Migration
 ```bash
-aws s3 ls s3://hv-fim-dev-stac/benchmark-stac/ --recursive | wc -l    # ~22,000
+aws s3 ls s3://hv-fim-dev-stac/benchmark-stac/ --recursive | wc -l    # ~23,000
 aws s3 ls s3://hv-fim-dev-data/benchmark/ --recursive | wc -l
 aws s3 cp s3://hv-fim-dev-stac/benchmark-stac/catalog.json - | jq '.'
 aws s3 ls s3://hv-fim-dev-data/benchmark/                              # 8 collection dirs + shared-assets/
@@ -241,7 +241,7 @@ aws s3api put-bucket-intelligent-tiering-configuration \
 ```
 
 **Gate:** Do not proceed until all of the following are confirmed:
-- `hv-fim-dev-stac/benchmark-stac/` object count is ~22,000
+- `hv-fim-dev-stac/benchmark-stac/` object count is ~23,000
 - `hv-fim-dev-data/benchmark/` contains all 8 collection directories
 - `catalog.json` HREFs reference `s3://hv-fim-dev-data/benchmark/...` (not `fimc-data`)
 - EC2 bootstrap is healthy (Phase 1.4)

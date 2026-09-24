@@ -9,12 +9,11 @@ import geopandas as gpd
 import matplotlib
 import pandas as pd
 import pystac
-from dateutil.parser import parse as parse_date
 from pystac.extensions.projection import ProjectionExtension
 from shapely.geometry import MultiPoint
 
 from ingest.hwm.hwm_handle_assets import HWMAssetHandler
-from ingest.hwm.hwm_stac import create_wkt_string, flowfile_dir
+from ingest.hwm.hwm_stac import create_wkt_string, event_date_range, fetch_stn_event_dates, flowfile_dir
 from ingest.utils import S3Utils
 
 matplotlib.use("Agg")  # Use the 'Agg' backend, which is non-interactive
@@ -124,6 +123,8 @@ def process_flood_events(
         # group by event name
         hwm_events = hwm_gdf.groupby("eventName")
 
+    stn_event_dates = fetch_stn_event_dates()
+
     for event_name, event_df in hwm_events:
         event_id = event_name.replace(" ", "_")
 
@@ -140,10 +141,7 @@ def process_flood_events(
         event_bbox = all_points.bounds
 
         # Get the temporal extent for the event
-        start_date = event_df["flag_date"].min()
-        end_date = event_df["flag_date"].max()
-        start_date = parse_date(start_date).replace(tzinfo=timezone.utc)
-        end_date = parse_date(end_date).replace(tzinfo=timezone.utc)
+        start_date, end_date = event_date_range(event_df["event_id"].dropna(), event_df["flag_date"], stn_event_dates)
         horizontal_datum = event_df["horizontalDatumName"].mode().iloc[0]
         vertical_datum = (
             event_df["verticalDatumName"].mode().iloc[0]

@@ -358,6 +358,7 @@ def load_catalog(
 
     total_items_loaded = 0
     total_items_failed = 0
+    total_items_skipped = 0
     collections_loaded = 0
 
     for collection_file in collection_files:
@@ -386,16 +387,30 @@ def load_catalog(
         print(f"  Found {len(item_files)} item(s)")
 
         if len(item_files) > 0:
-            if not dry_run:
-                # Load items from files
-                items = []
-                for item_file in item_files:
-                    try:
-                        item_data = load_json_file(item_file)
-                        items.append(item_data)
-                    except Exception as e:
-                        print(f"    WARNING: Failed to load item {item_file.name}: {e}")
+            # Load items from files, skipping any with a null/missing geometry — pgstac's
+            # NOT NULL constraint on geometry rejects the whole batch otherwise (upsert_items
+            # errors out for the batch, not just the offending row)
+            items = []
+            skipped_null_geometry = 0
+            for item_file in item_files:
+                try:
+                    item_data = load_json_file(item_file)
+                except Exception as e:
+                    print(f"    WARNING: Failed to load item {item_file.name}: {e}")
+                    continue
 
+                if not item_data.get("geometry"):
+                    print(f"    WARNING: skipping {item_data.get('id', item_file.name)}: null geometry")
+                    skipped_null_geometry += 1
+                    continue
+
+                items.append(item_data)
+
+            if skipped_null_geometry > 0:
+                print(f"  Skipped {skipped_null_geometry} item(s) with null geometry")
+                total_items_skipped += skipped_null_geometry
+
+            if not dry_run:
                 start_time = time.time()
                 successful, failed, errors = load_items_to_pgstac(conn, items, batch_size)
                 elapsed = time.time() - start_time
@@ -409,7 +424,7 @@ def load_catalog(
                 if failed > 0:
                     print(f"  Failed: {failed} items")
             else:
-                print(f"  [DRY RUN] Would load {len(item_files)} item(s)")
+                print(f"  [DRY RUN] Would load {len(items)} item(s)")
 
         print()
 
@@ -426,6 +441,7 @@ def load_catalog(
         print(f"Collections loaded: {collections_loaded}")
         print(f"Items loaded: {total_items_loaded}")
         print(f"Items failed: {total_items_failed}")
+        print(f"Items skipped (null geometry): {total_items_skipped}")
         print()
 
         # Get database statistics
@@ -442,6 +458,7 @@ def load_catalog(
             print(f"    {collection}: {count}")
     else:
         print(f"Collections found: {len(collection_files)}")
+        print(f"Items that would be skipped (null geometry): {total_items_skipped}")
         print(f"[DRY RUN] No data was loaded")
 
     print()

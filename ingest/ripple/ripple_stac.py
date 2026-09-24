@@ -102,8 +102,8 @@ class RasterHandler:
             return wkt2_string
 
     @staticmethod
-    def calculate_extent_area(raster_path: str, resolution: int = 3) -> float:
-        """Calculate area of flood extent in square meters"""
+    def calculate_extent_area(raster_path: str) -> float:
+        """Calculate area of flood extent in square meters, using the raster's own pixel size"""
         with rasterio.open(raster_path) as src:
             # Process raster in windows (out-of-memory processing)
             pixel_count = 0
@@ -112,6 +112,6 @@ class RasterHandler:
                 data = src.read(1, window=window)
                 # Count pixels that are not no_data (255) and are 1
                 pixel_count += np.sum((data != 255) & (data == 1))
-            # Convert to area using specified resolution
-            area = pixel_count * resolution * resolution
+            # Convert to area using the raster's pixel size
+            area = pixel_count * abs(src.res[0] * src.res[1])
             return area

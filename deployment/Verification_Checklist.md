@@ -255,7 +255,7 @@ nslookup $DOMAIN
 - [ ] Elastic IP or DNS configured (optional)
 
 **Migration**
-- [ ] S3 migration completed (~1.5 TB transferred)
+- [ ] S3 migration completed (~2.08 TB transferred)
 - [ ] Catalog structure verified (`hv-fim-dev-stac/benchmark-stac/` and `hv-fim-dev-data/benchmark/`)
 - [ ] Asset HREFs updated to new S3 bucket
 

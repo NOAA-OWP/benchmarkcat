@@ -1,21 +1,24 @@
 # BenchmarkCat STAC Deployment Strategy for OWP
 
 **Date:** February 10, 2026
+**Updated:** September 18, 2026 — asset volume and cost figures revised to measured values (see
+`deployment/s3_migration/S3_README.md` for the source measurement)
 **Author:** NGWPC FIMC Team
 **For:** NOAA Office of Water Prediction (OWP)
+**Status:** Developed in coordination with, and in alignment with, OWP prior to implementation.
 
 ---
 
 ## Overview
 
-This document outlines the deployment strategy for BenchmarkCat STAC (SpatioTemporal Asset Catalog) in the OWP AWS infrastructure. This deployment is based on proven architectures from NGWPC internal environments and will provide OWP users with 24/7 access to 1.5 TB of geospatial benchmark assets.
+This document outlines the deployment strategy for BenchmarkCat STAC (SpatioTemporal Asset Catalog) in the OWP AWS infrastructure. This deployment is based on proven architectures from NGWPC internal environments and will provide OWP users with 24/7 access to ~2.08 TB of geospatial benchmark assets.
 
 **Note:** This is a new production deployment for OWP. NGWPC's internal OE and TEST environments will remain operational for continued development and testing.
 
 ### Key Objectives
 
 - Deploy 24/7 STAC API in OWP AWS environment
-- Provide access to 1.5 TB of geospatial benchmark assets via S3
+- Provide access to ~2.08 TB of geospatial benchmark assets via S3
 - Enable easy access via STAC Browser and QGIS integration
 - Minimize operational costs while maintaining performance
 
@@ -46,7 +49,7 @@ The OWP deployment is based on two NGWPC internal environments that will remain 
 ## OWP Deployment Architecture
 
 **Design Principles:**
-- S3 as single source of truth (all 1.5 TB of benchmark assets)
+- S3 as single source of truth (all ~2.08 TB of benchmark assets)
 - Self-contained docker-compose deployment (PostgreSQL + STAC API)
 - Always-on availability (independent of developer EC2 lifecycle)
 - Direct S3 asset access via GDAL Virtual File System (no file server needed)
@@ -59,9 +62,9 @@ Application Layer:
 - STAC Browser - Port 8080
 
 Storage Layer:
-- Source S3 Bucket (`fimc-data`, NGWPC): 1.5 TB of geospatial assets, migrated to OWP
-- OWP STAC Bucket (`hv-fim-dev-stac`): ~22,800 catalog JSON files (~200 MB) under `benchmark-stac/`
-- OWP Data Bucket (`hv-fim-dev-data`): 1.5 TB of geospatial assets under `benchmark/`
+- Source S3 Bucket (`fimc-data`, NGWPC): ~2.08 TB of geospatial assets, migrated to OWP
+- OWP STAC Bucket (`hv-fim-dev-stac`): ~23,000 catalog JSON files (~200 MB) under `benchmark-stac/`
+- OWP Data Bucket (`hv-fim-dev-data`): ~2.08 TB of geospatial assets under `benchmark/`
 
 Access Layer:
 - OWP users: AWS SSO for S3, HTTP for STAC API
@@ -75,7 +78,7 @@ Access Layer:
 
 **Architecture:** Single t3.xlarge EC2 instance running 24/7 with docker-compose stack
 
-**Monthly Cost:** ~$185 (EC2 $120 + EBS $8 + S3 $35 + data transfer $10-15 + backups $1-2 + CloudWatch $5-10)
+**Monthly Cost:** ~$196 (EC2 $120 + EBS $8 + S3 $46 + data transfer $10-15 + backups $1-2 + CloudWatch $5-10)
 
 **Pros:**
 - Simple deployment and management
@@ -96,7 +99,7 @@ Access Layer:
 
 **Architecture:** ECS Fargate tasks with RDS or EFS-backed PostgreSQL
 
-**Monthly Cost:** ~$200 (Fargate $90-105 + EFS/RDS $10-15 + S3 $35 + ALB $25 + data transfer $15-20 + backups $1-2 + CloudWatch $5-10)
+**Monthly Cost:** ~$211 (Fargate $90-105 + EFS/RDS $10-15 + S3 $46 + ALB $25 + data transfer $15-20 + backups $1-2 + CloudWatch $5-10)
 
 **Pros:**
 - No server management
@@ -116,16 +119,16 @@ Access Layer:
 
 **S3-Only Approach (RECOMMENDED)**
 
-| Storage Type | Monthly Cost (1.5 TB) | Notes |
+| Storage Type | Monthly Cost (~2.08 TB) | Notes |
 |--------------|--------------|-------|
-| S3 Standard | $35 | Recommended baseline |
-| S3 Standard-IA (90+ days) | $19 | 45% savings for infrequent access |
-| EFS Standard | $461 | 13x more expensive - NOT recommended |
+| S3 Standard | $46 | Recommended baseline |
+| S3 Standard-IA (90+ days) | $25 | 45% savings for infrequent access |
+| EFS Standard | $600 | 13x more expensive - NOT recommended |
 
-S3 cost covers both buckets combined; catalog metadata in `hv-fim-dev-stac` is ~200 MB and is rounding noise against the 1.5 TB of assets in `hv-fim-dev-data`.
+S3 cost covers both buckets combined; catalog metadata in `hv-fim-dev-stac` is ~200 MB and is rounding noise against the ~2.08 TB of assets in `hv-fim-dev-data`.
 
 **Why S3:**
-- 93% cheaper than EFS ($35 vs $461/month)
+- 93% cheaper than EFS ($46 vs $600/month)
 - 99.999999999% durability
 - Native GDAL VSI support (no file server needed)
 - Unlimited scalability
@@ -138,7 +141,7 @@ The OWP deployment splits the catalog metadata and the geospatial assets into tw
 
 ```
   s3://hv-fim-dev-stac/
-  └── benchmark-stac/                          # STAC metadata (~22,800 files, ~200 MB)
+  └── benchmark-stac/                          # STAC metadata (~23,000 files, ~200 MB)
       ├── catalog.json                         # Root catalog
       ├── ble-collection/
       │   ├── collection.json
@@ -151,7 +154,7 @@ The OWP deployment splits the catalog metadata and the geospatial assets into tw
       ├── ripple-fim-collection/
       └── usgs-fim-collection/
 
-  s3://hv-fim-dev-data/                        # Geospatial assets (1.5 TB)
+  s3://hv-fim-dev-data/                        # Geospatial assets (~2.08 TB)
   └── benchmark/
       ├── shared-assets/                       # GPKGs, PDFs, parquet caches
       │   ├── WBDHU8_webproj.gpkg              # Shared HUC8 boundaries
@@ -187,7 +190,7 @@ The OWP deployment splits the catalog metadata and the geospatial assets into tw
 2. Plan S3 data transfer (NGWPC S3 → OWP S3, or cross-account access)
 3. Provision OWP AWS resources
 4. Deploy docker-compose stack
-5. Load full STAC catalog (~22,800 files) to PostgreSQL
+5. Load full STAC catalog (~23,000 files) to PostgreSQL
 6. Validate S3 asset accessibility
 
 ### Phase 3: Validation & Launch
@@ -236,7 +239,7 @@ The OWP deployment splits the catalog metadata and the geospatial assets into tw
 - Configuration in git repository
 - Recovery time: < 1 hour from AMI
 
-**S3 Assets (1.5 TB):**
+**S3 Assets (~2.08 TB):**
 - S3 native durability (99.999999999%)
 - Optional: S3 versioning or cross-region replication
 - Re-ingestion capability from original sources if needed

@@ -7,7 +7,7 @@ Migrates STAC catalog and assets from NGWPC S3 (`fimc-data`) to two dedicated OW
 **Destination Structure:**
 ```
 s3://hv-fim-dev-stac/
-└── benchmark-stac/                          # STAC metadata (~22,800 files, ~200 MB)
+└── benchmark-stac/                          # STAC metadata (~23,000 files, ~200 MB)
     ├── catalog.json                         # Root catalog
     ├── ble-collection/
     │   ├── collection.json
@@ -20,7 +20,7 @@ s3://hv-fim-dev-stac/
     ├── ripple-fim-collection/
     └── usgs-fim-collection/
 
-s3://hv-fim-dev-data/                        # Geospatial assets (1.5 TB)
+s3://hv-fim-dev-data/                        # Geospatial assets (~2.08 TB)
 └── benchmark/
     ├── shared-assets/                       # GPKGs, PDFs, parquet caches
     │   ├── WBDHU8_webproj.gpkg              # Shared HUC8 boundaries
@@ -46,7 +46,7 @@ s3://hv-fim-dev-data/                        # Geospatial assets (1.5 TB)
 | Collection | Source Path | Destination (under `hv-fim-dev-data/benchmark/`) |
 |------------|-------------|--------------------------------------------------|
 | ble-collection | `benchmark/high_resolution_validation_data_ble/` | `ble-collection/` |
-| ripple-fim-collection | `benchmark/ripple_fim_100/` | `ripple-fim-collection/` |
+| ripple-fim-collection | `benchmark/ripple_v0.11.x/` | `ripple-fim-collection/` |
 | hwm-collection | `benchmark/high_water_marks/usgs/` | `hwm-collection/` |
 | nws-fim-collection | `hand_fim/test_cases/nws_test_cases/validation_data_nws/` | `nws-fim-collection/` |
 | usgs-fim-collection | `hand_fim/test_cases/usgs_test_cases/validation_data_usgs/` | `usgs-fim-collection/` |
@@ -57,6 +57,13 @@ s3://hv-fim-dev-data/                        # Geospatial assets (1.5 TB)
 **STAC Catalog:** `benchmark/stac-bench-cat/` → `hv-fim-dev-stac/benchmark-stac/`
 
 **Shared Assets:** GPKGs, PDFs, and parquet caches → `hv-fim-dev-data/benchmark/shared-assets/`
+
+**Known behavior — `gfm-expanded-collection` copies some assets with no catalog item:**
+`migrate_s3.py` copies the whole `benchmark/rs/PI4/` source prefix, not just the assets referenced
+by a linked STAC item. 1,060 scenes (761 Canada + 299 Mexico) are deliberately excluded from the
+catalog by `gfm_exp_col.py`'s `is_within_neighbor_countries()` check, so they have no STAC item
+and no `collection.json` link — but their assets still exist under `rs/PI4/` and still get copied
+to OWP, since the migration has no per-item filtering.
 
 ## Prerequisites
 
@@ -159,7 +166,7 @@ python migrate_s3.py \
   --aws-profile your-profile \
   --skip-upload
 ```
-Downloads ~22,000 JSON files to `~/benchmark-catalog/source_catalog/` and updates HREFs (Phase 2). Add `--generate-copy-commands` to also produce `copy_assets.sh`.
+Downloads ~23,000 JSON files to `~/benchmark-catalog/source_catalog/` and updates HREFs (Phase 2). Add `--generate-copy-commands` to also produce `copy_assets.sh`.
 
 Verify:
 ```bash
@@ -176,7 +183,7 @@ Runs automatically with Phase 1. Transforms asset paths:
 
 Updated catalog is saved to `~/benchmark-catalog/dest_catalog/`. A manifest of all HREF changes is written to `~/benchmark-catalog/migration_manifest.json`.
 
-### Phase 3: Copy Assets (~8-12 hours, ~1.5TB)
+### Phase 3: Copy Assets (~8-12 hours, ~2.08 TB)
 
 Generate the copy script, then review and execute:
 ```bash
@@ -223,7 +230,7 @@ python migrate_s3.py \
 Verify:
 ```bash
 aws s3 ls s3://hv-fim-dev-stac/benchmark-stac/ --recursive | wc -l
-# Expected: ~22,000
+# Expected: ~23,000
 
 aws s3 cp s3://hv-fim-dev-stac/benchmark-stac/catalog.json - | jq '.'
 
