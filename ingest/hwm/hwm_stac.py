@@ -1,4 +1,9 @@
-# s3 paths to access flowlines and retrodata to create flowfiles 
+from collections.abc import Iterable
+from datetime import datetime, timezone
+
+import requests
+
+# s3 paths to access flowlines and retrodata to create flowfiles
 nwm_streams = 'hand_fim/inputs/nwm_hydrofabric/nwm_flows.gpkg'
 
 # need the bucket name for url_conus since isn't fimc-data
@@ -6,6 +11,43 @@ url_conus = 's3://noaa-nwm-retrospective-3-0-pds/CONUS/zarr/chrtout.zarr'
 
 #place to write the hwm flowfiles too. Make sure there isn't a leading or trailing "/" for s3 upload.
 flowfile_dir = "benchmark/high_water_marks/usgs/flowfiles"
+
+STN_EVENTS_URL = "https://stn.wim.usgs.gov/STNServices/Events.json"
+FLAG_DATE_FORMAT = "%m/%d/%Y %I:%M:%S %p"
+
+
+def event_date_range(
+    event_ids: Iterable[int],
+    flag_dates: Iterable[str],
+    stn_event_dates: dict[int, tuple[str | None, str | None]],
+) -> tuple[datetime, datetime]:
+    """
+    Start/end of a flood event from its USGS STN event dates.
+
+    One eventName can span several STN event_ids, so the range is the earliest start to the latest end.
+    flag_date is only a fallback when STN has no date: it's when each mark was flagged, often long after
+    the event, and has source typos (e.g. year 0201).
+    """
+    stn_dates = [stn_event_dates.get(int(i), (None, None)) for i in set(event_ids)]
+    starts = [_to_utc(start) for start, _ in stn_dates if start]
+    ends = [_to_utc(end) for _, end in stn_dates if end]
+    flagged = sorted(_to_utc(v, FLAG_DATE_FORMAT) for v in flag_dates if isinstance(v, str))
+
+    start = min(starts) if starts else flagged[0]
+    end = max(ends) if ends else flagged[-1]
+    return start, max(start, end)
+
+
+def fetch_stn_event_dates() -> dict[int, tuple[str | None, str | None]]:
+    """Map each USGS STN event_id to its (event_start_date, event_end_date)."""
+    response = requests.get(STN_EVENTS_URL, timeout=60)
+    response.raise_for_status()
+    return {e["event_id"]: (e.get("event_start_date"), e.get("event_end_date")) for e in response.json()}
+
+
+def _to_utc(value: str, fmt: str | None = None) -> datetime:
+    parsed = datetime.strptime(value, fmt) if fmt else datetime.fromisoformat(value)
+    return parsed.replace(tzinfo=timezone.utc)
 
 # different conditions to create wkt strings for events depending on crs/datum used
 def create_wkt_string(horizontalDatumName, verticalDatumName):

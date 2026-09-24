@@ -100,7 +100,7 @@ PATH_MAPPINGS = {
         'dest': 'ble-collection'
     },
     'ripple-fim-collection': {
-        'source': 'benchmark/ripple_fim_100',
+        'source': 'benchmark/ripple_v0.11.x',
         'dest': 'ripple-fim-collection'
     },
     'hwm-collection': {

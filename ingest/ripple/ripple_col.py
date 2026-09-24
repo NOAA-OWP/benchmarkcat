@@ -141,7 +141,7 @@ def process_ohio_rfc(
     if asset_handler.assets_processed(source_path) and not reprocess_assets:
         asset_results = asset_handler.read_data_parquet(source_path)
     else:
-        asset_results = asset_handler.handle_assets(source_path, "ohio_rfc", resolution=5)
+        asset_results = asset_handler.handle_assets(source_path, "ohio_rfc")
 
     # Convert numpy types to Python types in extent_areas
     if "extent_areas" in asset_results:
@@ -184,7 +184,7 @@ def process_ohio_rfc(
             "hucs": hucs_list,
             "flows2fim_version": f2fim_ver,
             "ripple_version": ripple_ver,
-            "resolution (m)": 5,
+            "resolution (m)": asset_results["resolution"],
         },
     )
 
@@ -263,7 +263,6 @@ def process_source_directory(
     f2fim_ver,
     ripple_ver,
     huc_gdf,
-    resolution,
     limit=None,
 ):
     """Catalog every subdirectory under source_path that has raster output.
@@ -292,7 +291,7 @@ def process_source_directory(
         if asset_handler.assets_processed(subdir) and not reprocess_assets:
             asset_results = asset_handler.read_data_parquet(subdir)
         else:
-            asset_results = asset_handler.handle_assets(subdir, source, resolution)
+            asset_results = asset_handler.handle_assets(subdir, source)
 
         # Convert numpy types to Python types in extent_areas
         if "extent_areas" in asset_results:
@@ -335,7 +334,7 @@ def process_source_directory(
                 "hucs": hucs_list,
                 "flows2fim_version": f2fim_ver,
                 "ripple_version": ripple_ver,
-                "resolution (m)": resolution,
+                "resolution (m)": asset_results["resolution"],
             },
         )
 
@@ -443,7 +442,6 @@ def main():
             args.f2fim_ver,
             args.ripple_ver,
             huc_gdf,
-            resolution=3,
             limit=args.limit,
         )
 

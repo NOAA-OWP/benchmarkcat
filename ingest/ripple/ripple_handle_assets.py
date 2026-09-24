@@ -46,6 +46,7 @@ class RippleFIMAssetHandler:
                 "extent_areas": pd.Series(dtype="str"),
                 "wkt2_string": pd.Series(dtype="str"),
                 "thumbnail": pd.Series(dtype="str"),
+                "resolution": pd.Series(dtype="float"),
             }
             return pd.DataFrame(columns)
 
@@ -68,7 +69,7 @@ class RippleFIMAssetHandler:
             return result
         return {}
 
-    def handle_assets(self, item_path: str, source: str, resolution: int = 3) -> Dict[str, Any]:
+    def handle_assets(self, item_path: str, source: str) -> Dict[str, Any]:
         results = {}
         magnitudes = []
         extent_areas = {}
@@ -101,6 +102,7 @@ class RippleFIMAssetHandler:
             with rasterio.open(local_tiff) as src:
                 gdf = gpd.GeoDataFrame({"geometry": [shape(domain)]}, crs=src.crs)
                 gdf.to_file(local_gpkg, driver="GPKG")
+                resolution = abs(src.res[0])
 
             s3_gpkg_path = os.path.join(item_path, gpkg_name)
             self.s3_utils.s3_client.upload_file(local_gpkg, self.bucket_name, s3_gpkg_path)
@@ -114,8 +116,7 @@ class RippleFIMAssetHandler:
                 local_tiff = os.path.join(tmpdir, os.path.basename(tiff))
                 self.s3_utils.s3_client.download_file(self.bucket_name, tiff, local_tiff)
 
-                # Calculate extent area with specified resolution
-                extent_areas[magnitude] = RasterHandler.calculate_extent_area(local_tiff, resolution)
+                extent_areas[magnitude] = RasterHandler.calculate_extent_area(local_tiff)
 
         results[item_path] = {
             "source": source,
@@ -125,6 +126,7 @@ class RippleFIMAssetHandler:
             "extent_areas": extent_areas,
             "wkt2_string": wkt2_string,
             "thumbnail": thumbnail_path,
+            "resolution": resolution,
         }
 
         self.write_data_parquet(results)
