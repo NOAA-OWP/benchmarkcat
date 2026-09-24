@@ -27,7 +27,7 @@ POSTGRES_DB="stacdb"
 POSTGRES_PASSWORD="${postgres_password}"  # Will be auto-generated if left empty
 
 # Docker Image Versions
-# Sep 2026: Note: There are some versions numbers hardcoded in a few places when 'cat' a string
+# NOTE: Sep 2026: Note: There are some versions numbers hardcoded in a few places when 'cat' a string
 # to make a file. Had trouble getting it to pick up the variables dynamically. Need to fix this.
 PGSTAC_VERSION="${pgstac_version}"
 STAC_FASTAPI_VERSION="${stac_fastapi_image_version}"
@@ -100,11 +100,6 @@ sudo rm -rf /var/lib/apt/lists/*
 wait_for_apt_lock
 sudo apt-get update -y
 
-# Sep 2026: Hold.. this errors out against our golden AMI with dpkg error (of course)
-# But.. maybe later, we can add: export DEBIAN_FRONTEND=noninteractive
-# wait_for_apt_lock
-# sudo apt-get upgrade -y
-
 wait_for_apt_lock
 echo "================================="
 echo 'Starting apt package installs'
@@ -121,6 +116,7 @@ sudo apt-get install -y \
     python3-pip \
     unzip
 
+# TODO: Sep 2026: We do not need this (golden AMI's)
 ARCH=$(uname -m)
 [ "$ARCH" = "x86_64" ] && URL="x86_64" || URL="aarch64"
 
@@ -187,7 +183,6 @@ echo "[$(date)] Creating directory structure..."
 
 sudo mkdir -p $INSTALL_DIR/deployment
 sudo mkdir -p $INSTALL_DIR/scripts
-# sudo mkdir -p $LOG_DIR  # created above
 sudo mkdir -p $BACKUP_DIR
 sudo mkdir -p /opt/stac/logs
 sudo mkdir -p /stac-catalog
@@ -278,8 +273,9 @@ echo "[$(date)] Creating asset proxy service..."
 
 mkdir -p $INSTALL_DIR/deployment/asset-proxy
 
-# Sept 2026: For readability, we should move the py scripts out of being directly embedded
-# and into seperate repo files that can be copied in.
+# TODO: Sept 2026: For readability, we should move the py scripts out of being directly embedded
+# and into seperate repo files that can be copied in. Might not be worth the effort.
+# But we do have a repo level file in our code called app.py
 cat > $INSTALL_DIR/deployment/asset-proxy/app.py <<'PROXY_APP_EOF'
 #!/usr/bin/env python3
 """
@@ -679,7 +675,6 @@ echo "================================="
 echo "[$(date)] Creating health check script..."
 
 # TODO: Sep 22, 2026:  Add a asset-proxy test in here.
-
 cat > $INSTALL_DIR/deployment/health-check.sh <<'HEALTH_EOF'
 #!/bin/bash
 
@@ -706,6 +701,12 @@ echo ""
 echo "--- STAC Browser Health ---"
 curl -s -o /dev/null -w "HTTP %%{http_code}\n" http://localhost:8080 2>/dev/null || echo "    *****  Browser: NOT RESPONDING  *****"
 echo ""
+
+# Check Proxy health
+# echo "--- Proxy Health ---"
+# TODO: Is there a way to get the proxy service? 
+# ... test_asset_proxy.sh
+
 
 # Check database
 echo "--- Database Health ---"

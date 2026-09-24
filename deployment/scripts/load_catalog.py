@@ -299,6 +299,10 @@ def load_catalog(
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+
+    # TODO: Add duration system
+    # TODO: Add logger
+
     print("=" * 80)
     print("BenchmarkCat STAC Catalog Loader")
     print("=" * 80)
