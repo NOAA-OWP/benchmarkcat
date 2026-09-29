@@ -46,29 +46,34 @@ data "aws_route53_zone" "selected" {
 # ==========================================
 # Ubuntu AMIs
 # ==========================================
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  owners      = ["099720109477"] # Canonical
+# TODO: Confirm.. we likely do not want this for OWP as we need approved pre-existing EC2 images
+# data "aws_ami" "ubuntu" {
+#   most_recent = true
+#   owners      = ["099720109477"] # Canonical
 
-  filter {
-    name   = "name"
-    # Dynamically matches: ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-* # Or: ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*
-    values = ["ubuntu/images/hvm-ssd*/ubuntu-${var.ubuntu_version}-${var.architecture}-server-*"]
-  }
+#   # TODO: Sep 2026, We need to rethink this as we always will be using golden AMI's
+#   # For now, just use var.ec2_instance_name_override
+#   filter {
+#     name   = "name"
+#     # Dynamically matches: ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-* # Or: ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*
+#     # values = ["ubuntu/images/hvm-ssd*/ubuntu-${var.ubuntu_version}-${var.architecture}-server-*"]
+#     values = ["stac-needs-to-be-fixed-in-tf"]
+#   }
 
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+#   filter {
+#     name   = "virtualization-type"
+#     values = ["hvm"]
+#   }
 
-  filter {
-    name   = "architecture"
-    # AWS uses "x86_64" in the architecture filter, but Canonical uses "amd64" in the AMI name
-    values = [var.architecture == "amd64" ? "x86_64" : var.architecture]
-  }
+#   # Must use OWPs golden images, so building an image from scratch is not an option
+#   # filter {
+#   #   name   = "architecture"
+#   #   # AWS uses "x86_64" in the architecture filter, but Canonical uses "amd64" in the AMI name
+#   #   values = [var.architecture == "amd64" ? "x86_64" : var.architecture]
+#   # }
 
-  filter {
-    name   = "state"
-    values = ["available"]
-  }
-}
+#   filter {
+#     name   = "state"
+#     values = ["available"]
+#   }
+# }

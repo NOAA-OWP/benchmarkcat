@@ -299,6 +299,10 @@ def load_catalog(
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+
+    # TODO: Add duration system
+    # TODO: Add logger
+
     print("=" * 80)
     print("BenchmarkCat STAC Catalog Loader")
     print("=" * 80)
@@ -368,6 +372,12 @@ def load_catalog(
 
         print(f"Processing collection: {collection_id}")
         print(f"  Path: {collection_dir}")
+
+        # Sep 2026: TEMP: Bug loading some collection types, 
+        if collection_id == "gfm-expanded-collection":
+            print("  Temp skipping: data issue in collection")
+            print("")
+            continue
 
         # Load collection
         if not dry_run:

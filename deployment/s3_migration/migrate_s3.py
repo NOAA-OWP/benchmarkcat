@@ -662,6 +662,8 @@ def main():
     working_dir = Path(args.working_dir).expanduser()
     working_dir.mkdir(parents=True, exist_ok=True)
 
+    # TODO: Add duration system
+
     logger.info("="*60)
     logger.info("S3 Migration with Restructuring")
     logger.info("="*60)
