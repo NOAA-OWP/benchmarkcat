@@ -93,8 +93,8 @@ Create `backend.tf` for remote state (recommend putting this file in SS3 backend
 ```bash
 cd ~/benchmarkcat/deployment/terraform
 terraform init
-terraform plan -var-file="terraform.tfvars"
-terraform apply -var-file="terraform.tfvars"
+terraform plan -var-file="C:\Benchmark-STAC\benchmark-stac.tfvars" -out "C:\Benchmark-STAC\benchmark-stac.tfplan"
+terraform apply -var-file="C:\Benchmark-STAC\benchmark-stac.tfplan"
 ```
 
 Creates: Security group (8080/8082/8083 + SSH to VPC), IAM role with dynamic S3 policies, EC2 instance with bootstrap, Route53 A record, CloudWatch log group.
@@ -116,7 +116,7 @@ docker ps  # Expect: benchmarkcat-db, benchmarkcat-api, benchmarkcat-browser, be
 
 **Note:** The bootstrap generates utility scripts (`health-check.sh`, `backup-db.sh`, `restart-services.sh`) on the EC2 instance at `/opt/benchmarkcat/deployment/`. These are not present in the repository.
 
-**Rollback:** `terraform destroy -var-file="terraform.tfvars"`
+**Rollback:** `terraform destroy -var-file="C:\Benchmark-STAC\benchmark-stac.tfplan"`
 
 **State after Phase 1:** 4 containers running, empty database, API on 8082, Browser on 8080, proxy on 8083.
 
